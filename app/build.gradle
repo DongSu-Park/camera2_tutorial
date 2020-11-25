@@ -38,5 +38,7 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-viewmodel:2.2.0"
     // LiveData
     implementation "androidx.lifecycle:lifecycle-livedata:2.2.0"
+    // material
+    implementation 'com.google.android.material:material:1.2.1'
 
 }
