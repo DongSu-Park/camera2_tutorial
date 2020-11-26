@@ -43,7 +43,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 앱을 시작하거나 백그라운드에서 다시 활성화 할 때 발생 (onCreate 전)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        textureView = texture_camera
+
+        // 비디오 녹화 버튼 클릭
+        btn_record.setOnClickListener {
+            if (!isRecording) {
+                isRecording = true
+                camera2Util.startRecordingVideo()
+            } else {
+                isRecording = false
+                camera2Util.stopRecordingVideo()
+            }
+        }
+    }
+
+    // 앱을 시작하거나 백그라운드에서 다시 활성화 할 때 발생
     override fun onResume() {
         super.onResume()
         camera2Util.startBackgroundThread()
@@ -64,24 +82,6 @@ class MainActivity : AppCompatActivity() {
             camera2Util.openCamera(textureView!!, mag!!, orientation!!, rotation!!, textureView!!.width, textureView!!.height)
         } else {
             texture_camera.surfaceTextureListener = textureListener
-        }
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        textureView = texture_camera
-
-        // 비디오 녹화 버튼 클릭
-        btn_record.setOnClickListener {
-            if (!isRecording) {
-                isRecording = true
-                camera2Util.startRecordingVideo()
-            } else {
-                isRecording = false
-                camera2Util.stopRecordingVideo()
-            }
         }
     }
 

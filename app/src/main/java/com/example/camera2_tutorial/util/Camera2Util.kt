@@ -221,6 +221,7 @@ class Camera2Util(context : Context){
             // Surface를 다시 설정하여 mediaRecoder.surface에 추가 (영상 녹화 대상체, 프리뷰 세션 -> 동영상 촬영 세션)
             val previewSurface = Surface(texture)
             val recorderSurface = mediaRecorder.surface
+
             val surfaces = ArrayList<Surface>().apply {
                 add(previewSurface)
                 add(recorderSurface)
@@ -327,10 +328,12 @@ class Camera2Util(context : Context){
 
     // Thread stop. 백그라운드 스레드 (워커스레드) 동작 중지
     fun stopBackgroundThread(){
+        // 워커 스레드를 안전하게 종료
         backgroundThread?.quitSafely()
         try{
-            // 백그라운드 스레드 초기화
+            // 백그라운드 스레드가 종료될 때까지 기다림 (종료됬는지 확인 용도)
             backgroundThread?.join()
+            // 백그라운드 스레드가 종료되면 핸들러 초기화 (백그라운드 스레드 종료되기 전에 null 발생하면 exception 발생)
             backgroundThread = null
             backgroundHandler = null
         } catch (e : InterruptedException){
