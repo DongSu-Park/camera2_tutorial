@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.view.TextureView
 import androidx.core.app.ActivityCompat
 import com.example.camera2_tutorial.R
+import com.example.camera2_tutorial.util.AutoFitTextureView
 import com.example.camera2_tutorial.util.Camera2Util
 import kotlinx.android.synthetic.main.activity_main.*
 
@@ -19,7 +20,7 @@ class MainActivity : AppCompatActivity() {
     private var orientation : Int? = null
     private var rotation : Int? = null
     // 이걸 변경해줘야 함.
-    private var textureView : TextureView? = null
+    private var textureView : AutoFitTextureView? = null
     var isRecording : Boolean = false
 
     // TextureView (Surface) 를 표현하기 위한 리스너 등록

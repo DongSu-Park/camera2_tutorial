@@ -15,8 +15,9 @@ import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
 import android.view.Surface
-import android.view.TextureView
 import android.widget.Toast
+import java.util.*
+import kotlin.collections.ArrayList
 
 class Camera2Util(context : Context){
     private val mainContext = context
@@ -26,19 +27,21 @@ class Camera2Util(context : Context){
     private var captureSession: CameraCaptureSession? = null
     private var backgroundThread : HandlerThread? = null
     private var backgroundHandler : Handler? = null
-    private var textureView : TextureView? = null
+    private var textureView : AutoFitTextureView? = null
     private var videoSize : Size? = null
-    private var mediaRecorder : MediaRecorder? = null
+    private var mediaRecorder = MediaRecorder()
     private var videoPath: String? = null
+    private var rotationView : Int? = null
 
-    // Texture에서 SurfaceTexture가 사용 가능 할 때 호출
+    // 1. Texture에서 SurfaceTexture가 사용 가능 할 때 호출
     @SuppressLint("MissingPermission")
-    fun openCamera(view: TextureView, mag : CameraManager, orientation : Int, rotation : Int, width: Int, height: Int) {
+    fun openCamera(view: AutoFitTextureView, mag : CameraManager, orientation : Int, rotation : Int, width: Int, height: Int) {
         Log.d("TAG", "카메라 제어 실행")
 
         // 카메라 제어를 위한 CameraManager 객체 생성
         try {
             textureView = view
+            rotationView = rotation
 
             // list 0번은 전면, list 1번은 후면
             val cameraId = mag.cameraIdList[0]
@@ -48,15 +51,14 @@ class Camera2Util(context : Context){
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
 
             // 영상 녹화에 사용할 Size 값을 가져옴
-            videoSize = map?.getOutputSizes(MediaRecorder::class.java)?.get(0)
-            mediaRecorder = MediaRecorder()
+            videoSize = chooseVideoSize(map!!.getOutputSizes(MediaRecorder::class.java))
 
             // SurfaceTexture에 사용할 Size 값을 가져옴
-            previewSize = map?.getOutputSizes(SurfaceTexture::class.java)?.get(0)
+            previewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture::class.java), width, height, videoSize!!)
 
             // 만약 해당 화면이 LANDSCAPE 상태이면
             if (orientation == Configuration.ORIENTATION_LANDSCAPE){
-                configureTransform(textureView!!, rotation, width, height)
+                configureTransform(textureView!!, rotationView!!, width, height)
             }
 
             // 인자로 넘겨준 cameraId 대상의 카메라 실행 (카메라 상태를 확인하기 위한 stateCallBack 상태를 관찰 함)
@@ -67,12 +69,29 @@ class Camera2Util(context : Context){
         }
     }
 
-    // 비디오 사이즈를 설정
-    private fun chooseVideoSize(choices: Array<Size>) = choices.firstOrNull {
-        it.width == it.height * 4 / 3 && it.width <= 1080 } ?: choices[choices.size - 1]
+    // 1-1. 카메라 프리뷰 사이즈를 설정
+    private fun chooseOptimalSize(choices: Array<Size>, width: Int, height: Int, aspectRatio: Size): Size {
 
-    // 회전 상태 일 때 TextureView 위치 값 다시 세팅
-    fun configureTransform(view: TextureView, rotation: Int, width: Int, height: Int) {
+        // Collect the supported resolutions that are at least as big as the preview Surface
+        val w = aspectRatio.width
+        val h = aspectRatio.height
+        val bigEnough = choices.filter {
+            it.height == it.width * h / w && it.width >= width && it.height >= height }
+
+        // Pick the smallest of those, assuming we found any
+        return if (bigEnough.isNotEmpty()) {
+            Collections.min(bigEnough, CompareSizesByArea())
+        } else {
+            choices[0]
+        }
+    }
+
+    // 1-2. 비디오 사이즈를 설정
+    private fun chooseVideoSize(choices: Array<Size>) = choices.firstOrNull {
+        it.width == it.height * 16 / 9 && it.width <= 1920 } ?: choices[choices.size - 1]
+
+    // 1-3. 회전 상태 일 때 TextureView 위치 값 다시 세팅
+    fun configureTransform(view: AutoFitTextureView, rotation: Int, width: Int, height: Int) {
         val matrix = Matrix()
         val viewRect = RectF(0f, 0f, width.toFloat(), height.toFloat())
         val bufferRect = RectF(0f, 0f, previewSize!!.height.toFloat(), previewSize!!.width.toFloat())
@@ -96,18 +115,22 @@ class Camera2Util(context : Context){
         view.setTransform(matrix)
     }
 
-    // 카메라 상태 확인 콜백
+    // 2. 카메라 상태 확인 콜백
     private val stateCallBack = object : CameraDevice.StateCallback(){
         override fun onOpened(camera: CameraDevice) {
             cameraDevice = camera
 
             // 미리보기 생성
             startPreview()
+
+            // 뷰 재 설정
+            configureTransform(textureView!!, rotationView!!,  textureView!!.width, textureView!!.height)
         }
 
         override fun onDisconnected(camera: CameraDevice) {
             // 연결 해제되면 cameraDevice 를 닫아줌
             cameraDevice!!.close()
+            cameraDevice = null
         }
 
         override fun onError(camera: CameraDevice, error: Int) {
@@ -119,11 +142,11 @@ class Camera2Util(context : Context){
         }
     }
 
-    // 카메라 프리뷰 (미리보기) 표시
+    // 3, 5-2 카메라 프리뷰 (미리보기) 표시
     private fun startPreview() {
         if (cameraDevice == null) return
 
-        try{
+        try {
             val texture = textureView!!.surfaceTexture
 
             // 미리보기를 위한 surface 기본 버퍼의 크기는 카메라 미리보기 크기로 설정
@@ -144,7 +167,7 @@ class Camera2Util(context : Context){
 
                     // 세션 준비완료되면 미리보기를 화면에 뿌려준다.
                     captureSession = session
-                    previewRequestBuilder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                    updatePreview()
 
                     try{
                         captureSession!!.setRepeatingRequest(previewRequestBuilder.build(), null, null)
@@ -157,14 +180,12 @@ class Camera2Util(context : Context){
                 }
 
             }, backgroundHandler)
-
-
         } catch (e : Exception){
             e.stackTrace
         }
     }
 
-    // 카메라 프리뷰 재생성
+    // 3-1. 카메라 프리뷰 재생성
     private fun updatePreview() {
         if (cameraDevice == null) return
 
@@ -178,46 +199,18 @@ class Camera2Util(context : Context){
         }
     }
 
-    // 카메라 디바이스 초기화 (카메라 제어 닫기)
-    fun closeCamera() {
-        if (cameraDevice != null){
-            cameraDevice!!.close()
-            cameraDevice = null
-        }
-    }
-
-    // 백그라운드 스레드 (워커스레드)로 동작 설계
-    fun startBackgroundThread() {
-        backgroundThread = HandlerThread("CameraBackground")
-        backgroundThread?.start()
-        backgroundHandler = Handler(backgroundThread?.looper)
-    }
-
-    // 백그라운드 스레드 (워커스레드) 동작 중지
-    fun stopBackgroundThread(){
-        backgroundThread?.quitSafely()
-        try{
-            // 백그라운드 스레드 초기화
-            backgroundThread?.join()
-            backgroundThread = null
-            backgroundHandler = null
-        } catch (e : InterruptedException){
-            Log.d("TAG", e.toString())
-        }
-    }
-
-    // 캡쳐 모드 다시 생성
+    // 3-2. 캡쳐 모드 설정 (카메라를 제어하고 메타데이터를 오토로 설정)
     private fun setUpCaptureRequestBuilder(builder: CaptureRequest.Builder?) {
         builder?.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
     }
 
-    // 비디오 레코딩 시작
+    // 4. (버튼 클릭 후) 비디오 레코딩 시작
     fun startRecordingVideo(){
         if (cameraDevice == null || !textureView!!.isAvailable) return
 
         try {
             // 녹화 준비를 위해 프리뷰 세션을 잠시 멈춤
-            closePreviewSession()
+            closeSession()
             // 레코더 설정을 세팅
             setUpMediaRecorder()
 
@@ -225,9 +218,9 @@ class Camera2Util(context : Context){
                 setDefaultBufferSize(previewSize!!.width, previewSize!!.height)
             }
 
-            // Surface를 다시 설정하여 mediaRecoder.surface에 추가 (영상 녹화 대상체)
+            // Surface를 다시 설정하여 mediaRecoder.surface에 추가 (영상 녹화 대상체, 프리뷰 세션 -> 동영상 촬영 세션)
             val previewSurface = Surface(texture)
-            val recorderSurface = mediaRecorder!!.surface
+            val recorderSurface = mediaRecorder.surface
             val surfaces = ArrayList<Surface>().apply {
                 add(previewSurface)
                 add(recorderSurface)
@@ -244,11 +237,11 @@ class Camera2Util(context : Context){
                     captureSession = session
                     updatePreview()
                     // 레코딩 시작
-                    mediaRecorder?.start()
+                    mediaRecorder.start()
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
-                   Toast.makeText(mainContext, "Failed", Toast.LENGTH_LONG).show()
+                    Toast.makeText(mainContext, "Failed", Toast.LENGTH_LONG).show()
                 }
             }, backgroundHandler)
 
@@ -257,27 +250,20 @@ class Camera2Util(context : Context){
         }
     }
 
-    // 비디오 레코딩 종료
-    fun stopRecordingVideo(){
-        mediaRecorder?.stop()
-        mediaRecorder?.reset()
-
-        // 저장 확인 토스트 메세지
-        Toast.makeText(mainContext, "Video saved : $videoPath", Toast.LENGTH_LONG).show()
-        videoPath = null
-
-        // 녹화 프리뷰가 아닌 일반 카메라 프리뷰로 전환
-        startPreview()
+    // 4-1, 5-1 현재 세션을 초기화 (프리뷰 세션 -> 녹화 세션), (녹화 세션 -> 프리뷰 세션)
+    private fun closeSession() {
+        captureSession?.close()
+        captureSession = null
     }
 
-    // MediaRecorder 설정
+    // 4-2. 동영상 입출력 설정을 위한 MediaRecorder 사용
     private fun setUpMediaRecorder() {
         if (videoPath == null){
             videoPath = setVideoPath()
         }
 
         try{
-            mediaRecorder?.apply {
+            mediaRecorder.apply {
                 // 설정 순서가 중요
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setVideoSource(MediaRecorder.VideoSource.SURFACE)
@@ -296,7 +282,23 @@ class Camera2Util(context : Context){
 
     }
 
-    // 파일 저장 위치 생성
+    // 5. (버튼 클릭 후) 비디오 레코딩 종료
+    fun stopRecordingVideo(){
+        mediaRecorder.stop()
+        mediaRecorder.reset()
+
+        // 저장 확인 토스트 메세지
+        Toast.makeText(mainContext, "Video saved : $videoPath", Toast.LENGTH_LONG).show()
+        videoPath = null
+
+        // 테스트를 위해 추가
+        closeSession()
+
+        // 녹화 종료 후 녹화 세션 -> 프리뷰 세션으로 변경
+        startPreview()
+    }
+
+    // Return. 파일 저장 위치 생성
     private fun setVideoPath(): String? {
         val filename = "${System.currentTimeMillis()}.mp4"
         val dir = mainContext.getExternalFilesDir(null)
@@ -308,9 +310,31 @@ class Camera2Util(context : Context){
         }
     }
 
-    // 카메라 세션을 초기화
-    private fun closePreviewSession() {
-        captureSession?.close()
-        captureSession = null
+    // Close. 카메라 디바이스 초기화 (onPause, onDestroy 경우)
+    fun closeCamera() {
+        if (cameraDevice != null){
+            cameraDevice!!.close()
+            cameraDevice = null
+        }
+    }
+
+    // Thread start. 백그라운드 스레드 (워커스레드)로 동작 설계
+    fun startBackgroundThread() {
+        backgroundThread = HandlerThread("CameraBackground")
+        backgroundThread?.start()
+        backgroundHandler = Handler(backgroundThread!!.looper)
+    }
+
+    // Thread stop. 백그라운드 스레드 (워커스레드) 동작 중지
+    fun stopBackgroundThread(){
+        backgroundThread?.quitSafely()
+        try{
+            // 백그라운드 스레드 초기화
+            backgroundThread?.join()
+            backgroundThread = null
+            backgroundHandler = null
+        } catch (e : InterruptedException){
+            Log.d("TAG", e.toString())
+        }
     }
 }
